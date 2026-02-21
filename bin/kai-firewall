@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# kai-firewall: manage iptables rules restricting kai container network access
+# Must be run as root (via sudo).
+#
+# Allowed outbound from container:
+#   - HTTPS (port 443): Anthropic API, GitHub, Claude Code services
+#   - DNS (port 53 udp/tcp): Docker's internal resolver forwards to external DNS
+#
+# Usage: kai-firewall {setup|teardown|status}
+#
+# Rules are lost on reboot. Run-kai.sh calls this automatically on container start.
+
+set -euo pipefail
+
+IFACE="kai-br"
+TAG="kai-fw"
+
+setup() {
+    teardown 2>/dev/null || true
+
+    iptables -I DOCKER-USER 1 -i "$IFACE" -p tcp --dport 443 -m comment --comment "$TAG" -j RETURN
+    iptables -I DOCKER-USER 2 -i "$IFACE" -p udp --dport 53 -m comment --comment "$TAG" -j RETURN
+    iptables -I DOCKER-USER 3 -i "$IFACE" -p tcp --dport 53 -m comment --comment "$TAG" -j RETURN
+    iptables -I DOCKER-USER 4 -i "$IFACE"                   -m comment --comment "$TAG" -j DROP
+
+    echo "kai firewall: rules installed on $IFACE"
+}
+
+teardown() {
+    iptables-save | grep -F "comment $TAG" | sed 's/^-A DOCKER-USER/-D DOCKER-USER/' \
+        | while IFS= read -r rule; do
+            iptables $rule 2>/dev/null || true
+          done
+    echo "kai firewall: rules removed"
+}
+
+status() {
+    echo "DOCKER-USER chain:"
+    iptables -L DOCKER-USER -n --line-numbers 2>/dev/null \
+        | grep -E "(DOCKER-USER|$TAG|$IFACE)" \
+        || echo "  (no kai rules found)"
+}
+
+case "${1:-}" in
+    setup)    setup    ;;
+    teardown) teardown ;;
+    status)   status   ;;
+    *) echo "Usage: kai-firewall {setup|teardown|status}" >&2; exit 1 ;;
+esac

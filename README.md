@@ -1,27 +1,42 @@
-;; -*- mode: markdown; eval: (visual-line-mode 1); -*-
+# kai — knowledge with AI
 
-# File structure
+An AI-assisted personal knowledge manager, built as a hobby project with two goals:
+learn Claude Code in depth, and build something personally useful.
 
-## $HOME/kai
+The spirit is Obsidian-style interlinked notes, but with no GUI requirement and no
+compatibility obligations. Primary interfaces are emacs and Unix CLI tools.
 
-The working tree for the docker container.  Accessible with the same name on the host, but mounted noexec on the host.
+## What's here
 
-## $HOME/kai/kaiprogs
+This repository (`kaiprogs`) contains the programs and infrastructure that run kai:
+a Docker container definition, bootstrap script, and utilities. Notes themselves
+live separately in `~/kai/notes/` and are not in version control.
 
-A git repository for the programs that make up kai.  This clone is for collaborating with claude code but not executing programs.  origin is an external public repository like github so git pull is possible, but git push is not.
+## Security design
 
-## $HOME/kaiprogs
+Claude Code runs inside a Docker container with access only to the kai tree.
+On the host, the kai tree is bind-mounted `noexec` to make it easier to stick to
+the policy of not running programs that may have been written by the AI inside the
+container. This is not airtight: a host interpreter (bash, python, etc.) can still
+be pointed at scripts in the kai tree. The defense is policy and habit, with noexec
+as a mechanical reminder, not a hard barrier.
 
-The same kaiprogs repository to be used on the host and not accessible to the container.  Cloned with authority to push to the external repository.  Has done "git remote add kai $HOME/kai/kaiprogs" so changes made in $HOME/kai/kaiprogs can be pulled, locally reviewed, and pushed to the external repository.
+Changes Claude makes to kaiprogs flow through a two-clone git workflow that requires
+human review before anything reaches GitHub.
 
-## $HOME/kaiprogs/bootstrap
+Container network access is currently unrestricted outbound, which is a known gap.
+The intent is to limit it to the minimum Anthropic API endpoints required for Claude
+to function.
 
-A script to run on the host after cloning kaiprogs from the external repository to the host.  Accomplishes:
+The threat model is explicitly permissive about data sensitivity in exchange for
+being able to work in this area at all.
 
-* git config --global protocol.file.allow user
-* stuff to create $HOME/kai with noexec
-* clone the external reporitory into $HOME/kai/kaiprogs
-* git remote add kai $HOME/kai/kaiprogs
-* create the docker container (deleting the old one)
+## Status
 
+Early infrastructure stage. The container builds and runs, Claude Code works inside
+it, and the git workflow is operational. The actual PKM features are next.
 
+## Contact
+
+If you're working on something in this space and want to compare notes, I'd like
+to hear from you: pace.willisson@gmail.com

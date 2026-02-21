@@ -1,0 +1,19 @@
+Test it:                            
+
+  ./run-kai.sh                                                                  
+   
+  You'll get a sudo prompt for the firewall setup. Once inside, to verify       
+  network restriction is working:                                             
+
+  # should work
+  curl -s https://api.anthropic.com >/dev/null && echo ok
+
+  # should be blocked (non-443 port)
+  curl -s --max-time 3 http://example.com || echo blocked
+
+  And on the host in a second terminal, to capture what claude actually connects
+   to:
+
+  kai-netwatch
+  # then run claude inside the container normally
+

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# kai-netwatch: log outbound network connections from the kai container.
+# Run on the host while the container is active.
+# Requires tcpdump (sudo).
+#
+# Captures new outbound TCP connections (SYN packets) on the kai bridge
+# interface. Use this to discover what hosts the container is reaching,
+# and to diagnose breakage when a previously-allowed host is blocked.
+#
+# Usage: kai-netwatch [logfile]
+# Default logfile: ~/kai/logs/netwatch.log
+
+set -euo pipefail
+
+LOGFILE="${1:-${HOME}/kai/logs/netwatch.log}"
+IFACE="kai-br"
+
+if ! docker inspect kai >/dev/null 2>&1; then
+    echo "kai container is not running" >&2
+    exit 1
+fi
+
+CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' kai)
+if [ -z "$CONTAINER_IP" ]; then
+    echo "could not determine container IP" >&2
+    exit 1
+fi
+
+mkdir -p "$(dirname "$LOGFILE")"
+
+echo "kai-netwatch: monitoring $CONTAINER_IP on $IFACE"
+echo "  logging to $LOGFILE"
+echo "  press Ctrl-C to stop"
+
+# Capture new outbound TCP connections (SYN only, not SYN-ACK).
+# Shows destination IP and port for each connection the container initiates.
+# Reverse-DNS is not done here; use 'host <ip>' to identify destinations later.
+sudo tcpdump -i "$IFACE" -n -l \
+    "src $CONTAINER_IP and tcp[tcpflags] & tcp-syn != 0 and tcp[tcpflags] & tcp-ack = 0" \
+    2>/dev/null \
+    | while IFS= read -r line; do
+        entry="$(date '+%Y-%m-%dT%H:%M:%S') $line"
+        echo "$entry" | tee -a "$LOGFILE"
+      done
