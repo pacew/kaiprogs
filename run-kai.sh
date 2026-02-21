@@ -6,6 +6,11 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     exit 1
 fi
 
+# If the container is already running, open a new shell in it.
+if docker ps --format '{{.Names}}' | grep -q '^kai$'; then
+    exec docker exec -it kai /bin/bash
+fi
+
 # Mount CLAUDE.md (user instructions) read-only.
 # Claude's writable config lives in a named volume so setup persists across restarts.
 # ~/.claude.json (main config) is persisted as a file in the kai tree.
