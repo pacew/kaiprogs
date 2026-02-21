@@ -10,7 +10,12 @@ FSTAB_TAG="# kai noexec bind mount"
 
 echo "=== kai bootstrap ==="
 
-# 1. Create directory structure
+# 1. Host git security config
+echo "Configuring git..."
+git config --global protocol.file.allow user
+echo "  protocol.file.allow = user"
+
+# 2. Create directory structure
 echo "Creating directory structure..."
 mkdir -p "${KAI}/notes"
 echo "  ${KAI}/notes"

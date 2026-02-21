@@ -6,8 +6,17 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     exit 1
 fi
 
+# Mount host Claude Code config files read-only into the container.
+# Guards handle the case where a file doesn't exist on this host yet.
+claude_mounts=()
+for f in CLAUDE.md settings.json; do
+    src="${HOME}/.claude/${f}"
+    [ -f "${src}" ] && claude_mounts+=(-v "${src}:/home/pace/.claude/${f}:ro")
+done
+
 exec docker run -it --rm \
     --name kai \
     -v "${HOME}/kai:/home/pace/kai" \
+    "${claude_mounts[@]}" \
     -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
     kai
