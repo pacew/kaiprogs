@@ -86,5 +86,5 @@ fi
 echo "=== bootstrap complete ==="
 echo ""
 echo "Next steps:"
-echo "  cd ${HOME}/kaiprogs && ./build-kai.sh   # build the container image"
-echo "  ./run-kai.sh                            # enter the container"
+echo "  ./build-kai.sh   # build the container image"
+echo "  ./run-kai.sh     # enter the container"
