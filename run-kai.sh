@@ -12,20 +12,16 @@ if docker ps --format '{{.Names}}' | grep -q '^kai$'; then
 fi
 
 # Mount CLAUDE.md (user instructions) read-only.
-# Claude's writable config lives in a named volume so setup persists across restarts.
-# ~/.claude.json (main config) is persisted as a file in the kai tree.
+# Claude's writable config (including ~/.claude.json) lives in the named volume,
+# never as a plain file on the host filesystem.
 claude_mounts=()
 src="${HOME}/.claude/CLAUDE.md"
 [ -f "${src}" ] && claude_mounts+=(-v "${src}:/home/pace/.claude/CLAUDE.md:ro")
-
-CLAUDE_JSON="${HOME}/kai/.claude.json"
-touch "${CLAUDE_JSON}"   # ensure it exists as a file before docker sees it
 
 exec docker run -it --rm \
     --name kai \
     -v "${HOME}/kai:/home/pace/kai" \
     -v "kai-claude-config:/home/pace/.claude" \
-    -v "${CLAUDE_JSON}:/home/pace/.claude.json" \
     "${claude_mounts[@]}" \
     -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
     -e TERM="${TERM:-xterm-256color}" \
