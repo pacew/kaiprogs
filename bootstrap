@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# bootstrap: one-time host setup for the kai tree
+# Creates the directory structure and establishes the noexec bind mount.
+# Safe to run more than once.
+set -euo pipefail
+
+KAI="${HOME}/kai"
+FSTAB="/etc/fstab"
+FSTAB_TAG="# kai noexec bind mount"
+
+echo "=== kai bootstrap ==="
+
+# 1. Create directory structure
+echo "Creating directory structure..."
+mkdir -p "${KAI}/notes"
+echo "  ${KAI}/notes"
+
+# 2. Add fstab entry for persistence across reboots
+if grep -qF "kai noexec bind mount" "${FSTAB}" 2>/dev/null; then
+    echo "fstab entry already present, skipping"
+else
+    echo "Adding fstab entry..."
+    printf '\n%s\n%s  %s  none  bind,noexec  0  0\n' \
+        "${FSTAB_TAG}" "${KAI}" "${KAI}" \
+        | sudo tee -a "${FSTAB}" > /dev/null
+    echo "  Added to ${FSTAB}"
+fi
+
+# 3. Apply the mount now, without waiting for reboot
+if mountpoint -q "${KAI}"; then
+    echo "${KAI} is already a mountpoint, skipping mount step"
+else
+    echo "Applying noexec bind mount..."
+    sudo mount --bind "${KAI}" "${KAI}"
+    sudo mount -o remount,noexec "${KAI}"
+    echo "  Mounted"
+fi
+
+# 4. Verify noexec is active
+echo "Verifying..."
+if findmnt --noheadings --output OPTIONS "${KAI}" | grep -q noexec; then
+    echo "  OK: ${KAI} is noexec"
+else
+    echo "  ERROR: noexec not confirmed on ${KAI}" >&2
+    findmnt "${KAI}" >&2
+    exit 1
+fi
+
+echo "=== bootstrap complete ==="
+echo ""
+echo "Next steps:"
+echo "  cd ${HOME}/kai/kaiprogs && ./build-kai.sh   # build the container image"
+echo "  ./run-kai.sh                                # enter the container"
