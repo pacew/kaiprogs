@@ -16,9 +16,23 @@ RUN apt-get update && apt-get install -y \
 # Install Claude Code
 RUN npm install -g @anthropic-ai/claude-code
 
-# Create user matching host uid/gid so kai tree file ownership stays clean
-RUN groupadd -g ${HOST_GID} pace && \
-    useradd -m -u ${HOST_UID} -g ${HOST_GID} -s /bin/bash pace
+# Create user matching host uid/gid so kai tree file ownership stays clean.
+# ubuntu:24.04 ships with an 'ubuntu' user at 1000:1000; rename it if needed.
+RUN set -e; \
+    if getent group ${HOST_GID} >/dev/null 2>&1; then \
+        old_group=$(getent group ${HOST_GID} | cut -d: -f1); \
+        [ "$old_group" != "pace" ] && groupmod -n pace "$old_group"; \
+    else \
+        groupadd -g ${HOST_GID} pace; \
+    fi; \
+    if getent passwd ${HOST_UID} >/dev/null 2>&1; then \
+        old_user=$(getent passwd ${HOST_UID} | cut -d: -f1); \
+        if [ "$old_user" != "pace" ]; then \
+            usermod -l pace -d /home/pace -m -s /bin/bash "$old_user"; \
+        fi; \
+    else \
+        useradd -m -u ${HOST_UID} -g ${HOST_GID} -s /bin/bash pace; \
+    fi
 
 # kaiprogs/bin is on PATH; the volume mount provides it at runtime
 ENV PATH="/home/pace/kai/kaiprogs/bin:${PATH}"
