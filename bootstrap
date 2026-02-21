@@ -31,7 +31,17 @@ else
     echo "  Cloned to ${KAIPROGS}"
 fi
 
-# 4. Add fstab entry for persistence across reboots
+# 4. Pre-seed Claude Code config to skip the first-run onboarding wizard
+CLAUDE_JSON="${KAI}/.claude.json"
+if grep -q '"hasCompletedOnboarding"' "${CLAUDE_JSON}" 2>/dev/null; then
+    echo "  ${CLAUDE_JSON} already has onboarding flag, skipping"
+else
+    echo "Pre-seeding Claude Code config..."
+    printf '{"hasCompletedOnboarding":true}\n' > "${CLAUDE_JSON}"
+    echo "  Created ${CLAUDE_JSON}"
+fi
+
+# 6. Add fstab entry for persistence across reboots
 if grep -qF "kai noexec bind mount" "${FSTAB}" 2>/dev/null; then
     echo "fstab entry already present, skipping"
 else
@@ -42,7 +52,7 @@ else
     echo "  Added to ${FSTAB}"
 fi
 
-# 5. Apply the mount now, without waiting for reboot
+# 7. Apply the mount now, without waiting for reboot
 if mountpoint -q "${KAI}"; then
     echo "${KAI} is already a mountpoint, skipping mount step"
 else
@@ -52,7 +62,7 @@ else
     echo "  Mounted"
 fi
 
-# 6. Verify noexec is active
+# 8. Verify noexec is active
 echo "Verifying..."
 if findmnt --noheadings --output OPTIONS "${KAI}" | grep -q noexec; then
     echo "  OK: ${KAI} is noexec"

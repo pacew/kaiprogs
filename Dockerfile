@@ -34,6 +34,9 @@ RUN set -e; \
         useradd -m -u ${HOST_UID} -g ${HOST_GID} -s /bin/bash pace; \
     fi
 
+# Create .claude dir owned by pace so claude can write config at runtime
+RUN mkdir -p /home/pace/.claude && chown pace:pace /home/pace/.claude
+
 # kaiprogs/bin is on PATH; the volume mount provides it at runtime
 ENV PATH="/home/pace/kai/kaiprogs/bin:${PATH}"
 
