@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # bootstrap: one-time host setup for the kai tree
-# Creates the directory structure and establishes the noexec bind mount.
+# Creates the directory structure, clones kaiprogs into the kai tree,
+# and establishes the noexec bind mount.
 # Safe to run more than once.
 set -euo pipefail
 
@@ -20,7 +21,17 @@ echo "Creating directory structure..."
 mkdir -p "${KAI}/notes"
 echo "  ${KAI}/notes"
 
-# 2. Add fstab entry for persistence across reboots
+# 3. Clone kaiprogs into the kai tree (container's read-only copy)
+KAIPROGS="${KAI}/kaiprogs"
+if [ -d "${KAIPROGS}/.git" ]; then
+    echo "  ${KAIPROGS} already exists, skipping clone"
+else
+    echo "Cloning kaiprogs into kai tree..."
+    git clone https://github.com/pacew/kaiprogs.git "${KAIPROGS}"
+    echo "  Cloned to ${KAIPROGS}"
+fi
+
+# 4. Add fstab entry for persistence across reboots
 if grep -qF "kai noexec bind mount" "${FSTAB}" 2>/dev/null; then
     echo "fstab entry already present, skipping"
 else
@@ -31,7 +42,7 @@ else
     echo "  Added to ${FSTAB}"
 fi
 
-# 3. Apply the mount now, without waiting for reboot
+# 5. Apply the mount now, without waiting for reboot
 if mountpoint -q "${KAI}"; then
     echo "${KAI} is already a mountpoint, skipping mount step"
 else
@@ -41,7 +52,7 @@ else
     echo "  Mounted"
 fi
 
-# 4. Verify noexec is active
+# 6. Verify noexec is active
 echo "Verifying..."
 if findmnt --noheadings --output OPTIONS "${KAI}" | grep -q noexec; then
     echo "  OK: ${KAI} is noexec"
