@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NOTES_DIR="/home/pace/kai/notes"
+TIMESTAMP=$(date +%Y%m%dT%H%M%S)
+NODE_FILE="${NOTES_DIR}/${TIMESTAMP}.md"
+
+mkdir -p "${NOTES_DIR}"
+touch "${NODE_FILE}"
+
+${EDITOR:-emacs} "${NODE_FILE}"
+
+echo "${NODE_FILE}"

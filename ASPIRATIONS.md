@@ -1,4 +1,4 @@
--*- mode:visual-lines -*-
+;; -*- mode: markdown; eval: (visual-line-mode 1); -*-
 
 # Intro
 
