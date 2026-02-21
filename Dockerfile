@@ -40,7 +40,10 @@ RUN mkdir -p /home/pace/.claude && chown pace:pace /home/pace/.claude
 # kaiprogs/bin is on PATH; the volume mount provides it at runtime
 ENV PATH="/home/pace/kai/kaiprogs/bin:${PATH}"
 
+COPY --chown=pace:pace entrypoint.sh /home/pace/entrypoint.sh
+RUN chmod +x /home/pace/entrypoint.sh
+
 USER pace
 WORKDIR /home/pace/kai
 
-CMD ["/bin/bash"]
+CMD ["/home/pace/entrypoint.sh"]
