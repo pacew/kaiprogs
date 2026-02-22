@@ -1,0 +1,303 @@
+#!/usr/bin/env python3
+"""
+kai-proxy: transparent SNI-filtering TLS proxy for the kai container.
+
+iptables REDIRECT routes port 443 from the container to this proxy.
+The proxy reads the TLS ClientHello, extracts the SNI hostname (plaintext
+even in TLS 1.3), checks it against an allowlist of domain patterns, and
+either forwards the connection transparently or drops it.
+
+No TLS termination occurs — the proxy is fully opaque to the TLS session.
+The iptables REDIRECT rule is installed on start and removed on exit.
+
+Usage:
+    kai-proxy [--interactive] [--discover]
+              [--port PORT] [--iface IFACE] [--allowlist FILE]
+
+    --interactive   prompt for unknown domains (y/n/a=always)
+    --discover      allow everything, just log (for building initial allowlist)
+    --port PORT     local listen port (default: 8443)
+    --iface IFACE   docker bridge interface (default: kai-br)
+    --allowlist     allowlist file (default: ../kai-proxy-allowlist.conf)
+"""
+
+import argparse
+import asyncio
+import dataclasses
+import logging
+import pathlib
+import signal
+import subprocess
+import sys
+
+log = logging.getLogger('kai-proxy')
+
+
+# ── SNI extraction ────────────────────────────────────────────────────────────
+
+def parse_sni(data: bytes) -> str | None:
+    """Extract SNI hostname from TLS ClientHello bytes. Returns None if absent."""
+    try:
+        if len(data) < 5 or data[0] != 0x16:        # must be Handshake record
+            return None
+        rec_len = int.from_bytes(data[3:5], 'big')
+        if len(data) < 5 + rec_len:
+            return None
+        hs = data[5:]
+        if hs[0] != 0x01:                             # must be ClientHello
+            return None
+        hs_len = int.from_bytes(hs[1:4], 'big')
+        hs = hs[4:4 + hs_len]                         # ClientHello body
+
+        pos = 34                                       # skip version(2) + random(32)
+        pos += 1 + hs[pos]                            # skip session ID
+        pos += 2 + int.from_bytes(hs[pos:pos+2], 'big')  # skip cipher suites
+        pos += 1 + hs[pos]                            # skip compression methods
+
+        if pos + 2 > len(hs):
+            return None
+        ext_end = pos + 2 + int.from_bytes(hs[pos:pos+2], 'big')
+        pos += 2
+
+        while pos + 4 <= ext_end:
+            ext_type = int.from_bytes(hs[pos:pos+2], 'big')
+            ext_len  = int.from_bytes(hs[pos+2:pos+4], 'big')
+            pos += 4
+            if ext_type == 0x0000:                    # SNI extension
+                # server_name_list_len(2) name_type(1) name_len(2) name
+                name_len = int.from_bytes(hs[pos+3:pos+5], 'big')
+                return hs[pos+5:pos+5+name_len].decode('ascii')
+            pos += ext_len
+    except Exception:
+        pass
+    return None
+
+
+# ── Allowlist ─────────────────────────────────────────────────────────────────
+
+def load_allowlist(path: pathlib.Path) -> list[str]:
+    if not path.exists():
+        log.warning(f'allowlist not found: {path}')
+        return []
+    patterns = []
+    for line in path.read_text().splitlines():
+        line = line.split('#')[0].strip()
+        if line:
+            patterns.append(line.lower())
+    return patterns
+
+def domain_allowed(hostname: str, patterns: list[str]) -> bool:
+    hostname = hostname.lower()
+    for pat in patterns:
+        if pat.startswith('*.'):
+            suffix = pat[2:]
+            if hostname == suffix or hostname.endswith('.' + suffix):
+                return True
+        elif hostname == pat:
+            return True
+    return False
+
+def append_allowlist(path: pathlib.Path, pattern: str) -> None:
+    with path.open('a') as f:
+        f.write(f'{pattern}\n')
+    log.info(f'appended to allowlist: {pattern}')
+
+
+# ── iptables ──────────────────────────────────────────────────────────────────
+
+def redirect_install(iface: str, port: int) -> None:
+    subprocess.run([
+        'sudo', 'iptables', '-t', 'nat', '-I', 'PREROUTING', '1',
+        '-i', iface, '-p', 'tcp', '--dport', '443',
+        '-m', 'comment', '--comment', 'kai-proxy',
+        '-j', 'REDIRECT', '--to-port', str(port),
+    ], check=True)
+    log.info(f'REDIRECT installed: {iface}:443 → 127.0.0.1:{port}')
+
+def redirect_remove() -> None:
+    result = subprocess.run(
+        ['sudo', 'iptables-save', '-t', 'nat'],
+        capture_output=True, text=True
+    )
+    for line in result.stdout.splitlines():
+        if 'kai-proxy' in line and line.startswith('-A PREROUTING'):
+            rule = line.replace('-A PREROUTING', '-D PREROUTING', 1).split()
+            subprocess.run(['sudo', 'iptables', '-t', 'nat'] + rule, check=False)
+    log.info('REDIRECT removed')
+
+
+# ── Proxy ─────────────────────────────────────────────────────────────────────
+
+async def pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Forward bytes from reader to writer until EOF or error."""
+    try:
+        while chunk := await reader.read(65536):
+            writer.write(chunk)
+            await writer.drain()
+    except (ConnectionResetError, BrokenPipeError):
+        pass
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+
+@dataclasses.dataclass
+class PendingDecision:
+    event: asyncio.Event
+    allowed: bool = False
+
+
+class Proxy:
+    def __init__(self, allowlist_path: pathlib.Path, patterns: list[str],
+                 interactive: bool, discover: bool):
+        self.allowlist_path = allowlist_path
+        self.patterns = patterns
+        self.interactive = interactive
+        self.discover = discover
+        self.pending: dict[str, PendingDecision] = {}
+        self._stdin: asyncio.StreamReader | None = None
+
+    async def setup(self) -> None:
+        if not self.interactive:
+            return
+        loop = asyncio.get_running_loop()
+        reader = asyncio.StreamReader()
+        await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
+        self._stdin = reader
+
+    async def _ask_user(self, hostname: str) -> bool:
+        # Suggest a wildcard pattern covering the hostname's parent domain.
+        if hostname.count('.') >= 2:
+            parent = '.'.join(hostname.split('.')[1:])
+            suggestion = f'*.{parent}'
+        else:
+            suggestion = hostname
+
+        sys.stdout.write(f'\nBlocked: {hostname}\n')
+        sys.stdout.write(f'[y] allow once  [n] deny  [a] always allow {suggestion}: ')
+        sys.stdout.flush()
+        line = (await self._stdin.readline()).decode().strip().lower()
+        if line == 'a':
+            self.patterns.append(suggestion.lower())
+            append_allowlist(self.allowlist_path, suggestion)
+            return True
+        return line == 'y'
+
+    async def decide(self, hostname: str) -> bool:
+        if self.discover:
+            log.info(f'DISCOVER {hostname}')
+            return True
+        if domain_allowed(hostname, self.patterns):
+            log.debug(f'allow {hostname}')
+            return True
+        if not self.interactive:
+            log.warning(f'BLOCK {hostname}')
+            return False
+        # Coalesce concurrent requests for the same unknown hostname.
+        if hostname in self.pending:
+            await self.pending[hostname].event.wait()
+            return self.pending[hostname].allowed
+        dec = PendingDecision(event=asyncio.Event())
+        self.pending[hostname] = dec
+        dec.allowed = await self._ask_user(hostname)
+        dec.event.set()
+        del self.pending[hostname]
+        return dec.allowed
+
+    async def handle(self, client_r: asyncio.StreamReader,
+                     client_w: asyncio.StreamWriter) -> None:
+        try:
+            hello = await asyncio.wait_for(client_r.read(4096), timeout=5.0)
+        except asyncio.TimeoutError:
+            client_w.close()
+            return
+
+        hostname = parse_sni(hello)
+        if not hostname:
+            log.warning('no SNI in ClientHello — dropping connection')
+            client_w.close()
+            return
+
+        if not await self.decide(hostname):
+            client_w.close()
+            return
+
+        try:
+            server_r, server_w = await asyncio.wait_for(
+                asyncio.open_connection(hostname, 443), timeout=10.0
+            )
+        except Exception as exc:
+            log.warning(f'{hostname}: upstream connect failed: {exc}')
+            client_w.close()
+            return
+
+        # Forward the ClientHello we already read, then relay both directions.
+        server_w.write(hello)
+        await server_w.drain()
+
+        t1 = asyncio.create_task(pipe(client_r, server_w))
+        t2 = asyncio.create_task(pipe(server_r, client_w))
+        done, pending = await asyncio.wait([t1, t2], return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+async def run(args: argparse.Namespace) -> None:
+    patterns = load_allowlist(args.allowlist)
+    log.info(f'{len(patterns)} patterns loaded from {args.allowlist}')
+
+    proxy = Proxy(args.allowlist, patterns, args.interactive, args.discover)
+    await proxy.setup()
+
+    redirect_install(args.iface, args.port)
+
+    loop = asyncio.get_running_loop()
+    stop: asyncio.Future = loop.create_future()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda: stop.done() or stop.set_result(None))
+
+    server = await asyncio.start_server(proxy.handle, '127.0.0.1', args.port)
+    mode = 'discover' if args.discover else ('interactive' if args.interactive else 'enforcing')
+    log.info(f'listening on 127.0.0.1:{args.port} [{mode} mode]')
+    log.info('Ctrl-C to stop')
+
+    try:
+        await stop
+    finally:
+        server.close()
+        await server.wait_closed()
+        redirect_remove()
+
+
+def main() -> None:
+    script_dir = pathlib.Path(__file__).resolve().parent.parent
+    default_allowlist = script_dir / 'kai-proxy-allowlist.conf'
+
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--interactive', action='store_true',
+                    help='prompt for unknown domains')
+    ap.add_argument('--discover', action='store_true',
+                    help='allow all connections, log for allowlist building')
+    ap.add_argument('--port', type=int, default=8443)
+    ap.add_argument('--iface', default='kai-br')
+    ap.add_argument('--allowlist', type=pathlib.Path, default=default_allowlist)
+    args = ap.parse_args()
+
+    logging.basicConfig(level=logging.INFO,
+                        format='%(asctime)s %(levelname)s %(message)s',
+                        datefmt='%H:%M:%S')
+    asyncio.run(run(args))
+
+
+if __name__ == '__main__':
+    main()

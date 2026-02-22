@@ -72,3 +72,7 @@ Markdown files containing
 * dietary preferences for me and friends
 * files related to party planning
 
+## Active journal
+
+The user runs a command indicating that they are ready to write a journal entry for the day.  The AI gives an open ended jounaling prompt that's roughly "What do you want to write about today?" but that is enriched by previous journal entries, along with generic wisdom about typically useful journaling prompts.  The user makes a freeform response of a paragraph or so.  The AI responds with observations connecting the response the the user's history and wider knowledge along with an a prompt to dig deeper in a second response.  Maybe repeat the cycle once more.  Then the AI format's the day's entries as a node in the PKM.
+

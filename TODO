@@ -17,3 +17,22 @@ Test it:
   kai-netwatch
   # then run claude inside the container normally
 
+
+===
+
+A few notes on the design:                                                    
+                                                                                
+  Interaction with kai-firewall: The REDIRECT fires in the nat PREROUTING table,
+   before the FORWARD chain where kai-firewall's DROP rules live. So port 443   
+  traffic is intercepted by the proxy regardless of the kai-firewall DROP rule —
+   the two don't conflict.                                                      
+                                                                                
+  Workflow for discovery: Before enforcing, run kai-proxy --discover in one     
+  terminal while using claude in the container normally. It logs every domain   
+  reached. Add any missing ones to kai-proxy-allowlist.conf, commit, then switch
+   to normal enforcing mode.                                                    
+                                                                                
+  Missing from this pass: kai-proxy isn't yet wired into run-kai.sh because it  
+  needs a separate terminal for interactive mode. Worth a deliberate decision   
+  about whether to daemonize it or keep it user-facing.
+
