@@ -18,6 +18,14 @@ This is not designed to be safe for general users. That's a separate and importa
 problem. This is designed for people who have the systems background to understand
 what the containment is actually doing, and who want to get real work done.
 
+## Collaboration note
+
+This project is developed in active collaboration with Claude (Anthropic's AI).
+Pace provides the direction, security judgments, and use-case choices. Claude
+contributes implementation, ideas, and most of the prose. "AI-assisted" would
+understate it. Both are credited because the work is genuinely joint, and because
+presenting Claude's writing as purely Pace's would be inaccurate.
+
 ## What the containment does
 
 Claude Code runs inside a Docker container with access to a dedicated workspace
